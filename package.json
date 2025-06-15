@@ -4,7 +4,7 @@
   "description": "Automatically scan your codebase and generate interactive Swagger UI documentation for your APIs",
   "main": "src/cli/index.js",
   "bin": {
-    "api-documenter": "./src/cli/index.js"
+    "api-documenter": "./bin/api-documenter"
   },
   "scripts": {
     "start": "node src/cli/index.js",
@@ -30,35 +30,37 @@
   "author": "API-Documenter Contributors",
   "license": "MIT",
   "dependencies": {
-    "commander": "^11.0.0",
-    "express": "^4.18.2",
-    "swagger-ui-dist": "^5.0.0",
-    "swagger-ui-express": "^5.0.0",
-    "chalk": "^4.1.2",
-    "ora": "^5.4.1",
-    "fs-extra": "^11.1.1",
-    "glob": "^10.3.0",
-    "js-yaml": "^4.1.0",
-    "esprima": "^4.0.1",
-    "esprima-walk": "^0.1.0",
+    "@babel/parser": "^7.27.5",
+    "@babel/traverse": "^7.27.4",
+    "@babel/types": "^7.27.6",
     "acorn": "^8.10.0",
     "acorn-walk": "^8.2.0",
-    "@babel/parser": "^7.22.0",
-    "@babel/traverse": "^7.22.0",
-    "@babel/types": "^7.22.0",
-    "http-proxy-middleware": "^2.0.6",
+    "chalk": "^4.1.2",
+    "chokidar": "^3.6.0",
+    "commander": "^11.1.0",
     "cors": "^2.8.5",
-    "chokidar": "^3.5.3"
+    "esprima": "^4.0.1",
+    "esprima-walk": "^0.1.0",
+    "express": "^4.21.2",
+    "fs-extra": "^11.3.0",
+    "glob": "^10.4.5",
+    "http-proxy-middleware": "^2.0.6",
+    "js-yaml": "^4.1.0",
+    "open": "^10.1.2",
+    "ora": "^5.4.1",
+    "swagger-ui-dist": "^5.0.0",
+    "swagger-ui-express": "^5.0.1",
+    "yaml": "^2.8.0"
   },
   "devDependencies": {
-    "jest": "^29.6.0",
-    "nodemon": "^3.0.0",
+    "@types/jest": "^29.5.0",
     "eslint": "^8.45.0",
     "eslint-config-standard": "^17.1.0",
     "eslint-plugin-import": "^2.27.5",
     "eslint-plugin-n": "^16.0.0",
     "eslint-plugin-promise": "^6.1.1",
-    "@types/jest": "^29.5.0"
+    "jest": "^29.6.0",
+    "nodemon": "^3.0.0"
   },
   "engines": {
     "node": ">=14.0.0"

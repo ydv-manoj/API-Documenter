@@ -1,388 +1,277 @@
-const yaml = require('js-yaml');
-
-/**
- * OpenAPI specification generator
- */
 class Generator {
   constructor(options = {}) {
     this.options = {
       title: 'API Documentation',
-      description: 'Generated API documentation',
       version: '1.0.0',
-      servers: [
-        {
-          url: 'http://localhost:3000',
-          description: 'Development server'
-        }
-      ],
+      description: 'Auto-generated API documentation',
+      baseUrl: 'http://localhost:3000',
       ...options
     };
   }
 
-  /**
-   * Generate OpenAPI specification from parsed route data
-   * @param {Object} parseResult - Result from parser
-   * @param {Object} options - Generation options
-   * @returns {Promise<Object>}
-   */
-  async generate(parseResult, options = {}) {
-    const { format = 'json', title, description } = options;
-
-    console.log(`📖 Generating ${format.toUpperCase()} documentation...`);
-
-    try {
-      // Build OpenAPI specification
-      const openApiSpec = this.buildOpenApiSpec(parseResult, { title, description });
-
-      // Convert to requested format
-      let content;
-      switch (format.toLowerCase()) {
-        case 'yaml':
-        case 'yml':
-          content = yaml.dump(openApiSpec, { indent: 2, lineWidth: -1 });
-          break;
-        case 'json':
-        default:
-          content = JSON.stringify(openApiSpec, null, 2);
-          break;
-      }
-
-      return {
-        openApiSpec,
-        content,
-        format,
-        routes: parseResult.routes.length,
-        summary: parseResult.summary
-      };
-
-    } catch (error) {
-      console.error('Generator error:', error.message);
-      throw error;
-    }
-  }
-
-  /**
-   * Build OpenAPI 3.0 specification
-   * @param {Object} parseResult 
-   * @param {Object} options 
-   * @returns {Object}
-   */
-  buildOpenApiSpec(parseResult, options = {}) {
-    const spec = {
-      openapi: '3.0.3',
-      info: {
-        title: options.title || this.options.title,
-        description: options.description || this.options.description,
-        version: this.options.version,
-        'x-generated-by': 'API-Documenter',
-        'x-generated-at': new Date().toISOString()
-      },
-      servers: this.options.servers,
-      paths: {},
-      components: {
-        schemas: {},
-        parameters: {},
-        responses: {}
-      },
-      tags: []
+  generateSpec(routes) {
+    const paths = {};
+    const components = {
+      schemas: {},
+      responses: {},
+      parameters: {}
     };
 
-    // Process routes and group by path
-    const pathGroups = this.groupRoutesByPath(parseResult.routes);
+    // Group routes by path
+    const groupedRoutes = this.groupRoutesByPath(routes);
 
     // Generate paths
-    for (const [path, routes] of Object.entries(pathGroups)) {
-      spec.paths[path] = this.buildPathItem(routes, parseResult);
-    }
+    Object.entries(groupedRoutes).forEach(([path, pathRoutes]) => {
+      paths[path] = {};
+      
+      pathRoutes.forEach(route => {
+        const operation = this.generateOperation(route);
+        paths[path][route.method.toLowerCase()] = operation;
+      });
+    });
 
-    // Generate components
-    spec.components.schemas = this.buildSchemas(parseResult);
-    spec.tags = this.buildTags(parseResult.routes);
-
-    // Add summary information
-    spec['x-summary'] = {
-      totalRoutes: parseResult.routes.length,
-      frameworks: parseResult.summary.frameworks,
-      httpMethods: parseResult.summary.httpMethods,
-      categories: this.getRouteCategories(parseResult.routes)
+    const spec = {
+      openapi: '3.0.0',
+      info: {
+        title: this.options.title,
+        version: this.options.version,
+        description: this.options.description
+      },
+      servers: [
+        {
+          url: this.options.baseUrl,
+          description: 'Development server'
+        }
+      ],
+      paths,
+      components
     };
 
     return spec;
   }
 
-  /**
-   * Group routes by path for OpenAPI structure
-   * @param {Array} routes 
-   * @returns {Object}
-   */
   groupRoutesByPath(routes) {
-    const groups = {};
+    const grouped = {};
     
     routes.forEach(route => {
-      const path = this.normalizeOpenApiPath(route.path);
-      if (!groups[path]) {
-        groups[path] = [];
+      if (!grouped[route.path]) {
+        grouped[route.path] = [];
       }
-      groups[path].push(route);
+      grouped[route.path].push(route);
     });
-
-    return groups;
+    
+    return grouped;
   }
 
-  /**
-   * Normalize path for OpenAPI format
-   * @param {string} path 
-   * @returns {string}
-   */
-  normalizeOpenApiPath(path) {
-    // Convert Express-style parameters (:param) to OpenAPI style ({param})
-    return path.replace(/:([a-zA-Z0-9_]+)/g, '{$1}');
-  }
-
-  /**
-   * Build OpenAPI path item for a set of routes
-   * @param {Array} routes 
-   * @param {Object} parseResult 
-   * @returns {Object}
-   */
-  buildPathItem(routes, parseResult) {
-    const pathItem = {};
-
-    routes.forEach(route => {
-      const operation = this.buildOperation(route, parseResult);
-      pathItem[route.method.toLowerCase()] = operation;
-    });
-
-    return pathItem;
-  }
-
-  /**
-   * Build OpenAPI operation object
-   * @param {Object} route 
-   * @param {Object} parseResult 
-   * @returns {Object}
-   */
-  buildOperation(route, parseResult) {
+  generateOperation(route) {
     const operation = {
-      summary: route.documentation?.summary || `${route.method} ${route.path}`,
-      description: route.documentation?.description || `${route.method} operation for ${route.path}`,
-      operationId: route.id || `${route.method.toLowerCase()}_${route.path.replace(/[^a-zA-Z0-9]/g, '_')}`,
-      tags: [route.category || 'general'],
-      parameters: [],
-      responses: {}
+      summary: this.generateSummary(route),
+      description: route.description || this.generateDescription(route),
+      tags: this.generateTags(route),
+      parameters: this.generateParameters(route),
+      responses: this.generateResponses(route)
     };
 
-    // Add path parameters
-    if (route.parameters) {
-      route.parameters.forEach(param => {
-        operation.parameters.push({
-          name: param.name,
-          in: param.in,
-          required: param.required || false,
-          schema: {
-            type: param.type || 'string'
-          },
-          description: param.description || `${param.name} parameter`
-        });
-      });
-    }
-
-    // Add request body for methods that typically have one
-    if (['POST', 'PUT', 'PATCH'].includes(route.method) && route.requestSchema) {
-      operation.requestBody = {
-        required: true,
-        content: {
-          'application/json': {
-            schema: route.requestSchema
-          }
-        }
-      };
-    }
-
-    // Add responses
-    operation.responses = this.buildResponses(route);
-
-    // Add metadata
-    if (route.metadata) {
-      operation['x-metadata'] = {
-        hasAuth: route.metadata.hasAuth,
-        hasValidation: route.metadata.hasValidation,
-        complexity: route.metadata.complexity,
-        framework: route.framework
-      };
+    // Add request body for POST, PUT, PATCH
+    if (['POST', 'PUT', 'PATCH'].includes(route.method)) {
+      operation.requestBody = this.generateRequestBody(route);
     }
 
     return operation;
   }
 
-  /**
-   * Build responses for a route
-   * @param {Object} route 
-   * @returns {Object}
-   */
-  buildResponses(route) {
-    const responses = {
-      '200': {
-        description: 'Successful response',
-        content: {
-          'application/json': {
-            schema: route.responseSchema || {
-              type: 'object',
-              properties: {
-                message: {
-                  type: 'string',
-                  example: 'Success'
-                }
-              }
-            }
-          }
-        }
-      }
+  generateSummary(route) {
+    if (route.description) {
+      return route.description.split('.')[0];
+    }
+    
+    const pathParts = route.path.split('/').filter(part => part && !part.startsWith(':'));
+    const resource = pathParts[pathParts.length - 1] || 'resource';
+    
+    const actionMap = {
+      'GET': route.path.includes(':') ? `Get ${resource}` : `List ${resource}s`,
+      'POST': `Create ${resource}`,
+      'PUT': `Update ${resource}`,
+      'PATCH': `Partially update ${resource}`,
+      'DELETE': `Delete ${resource}`
     };
+    
+    return actionMap[route.method] || `${route.method} ${resource}`;
+  }
 
-    // Add common error responses
-    if (route.metadata?.hasAuth) {
-      responses['401'] = {
-        description: 'Unauthorized',
-        content: {
-          'application/json': {
-            schema: {
-              type: 'object',
-              properties: {
-                error: { type: 'string', example: 'Unauthorized' }
-              }
-            }
-          }
-        }
-      };
+  generateDescription(route) {
+    const pathParts = route.path.split('/').filter(part => part && !part.startsWith(':'));
+    const resource = pathParts[pathParts.length - 1] || 'resource';
+    
+    const descriptionMap = {
+      'GET': route.path.includes(':') ? 
+        `Retrieve a specific ${resource} by ID` : 
+        `Retrieve a list of ${resource}s`,
+      'POST': `Create a new ${resource}`,
+      'PUT': `Update an existing ${resource}`,
+      'PATCH': `Partially update an existing ${resource}`,
+      'DELETE': `Delete a ${resource}`
+    };
+    
+    return descriptionMap[route.method] || `Perform ${route.method} operation on ${resource}`;
+  }
+
+  generateTags(route) {
+    const pathParts = route.path.split('/').filter(part => part && !part.startsWith(':'));
+    if (pathParts.length > 0) {
+      const tag = pathParts[0].charAt(0).toUpperCase() + pathParts[0].slice(1);
+      return [tag];
     }
+    return ['API'];
+  }
 
-    if (route.metadata?.hasValidation) {
-      responses['400'] = {
-        description: 'Bad Request - Validation Error',
-        content: {
-          'application/json': {
-            schema: {
-              type: 'object',
-              properties: {
-                error: { type: 'string', example: 'Validation failed' },
-                details: { type: 'array', items: { type: 'string' } }
-              }
-            }
-          }
-        }
-      };
+  generateParameters(route) {
+    const parameters = [];
+    
+    // Add path parameters
+    if (route.parameters) {
+      route.parameters.forEach(param => {
+        parameters.push({
+          name: param.name,
+          in: 'path',
+          required: true,
+          schema: {
+            type: 'string'
+          },
+          description: `${param.name} identifier`
+        });
+      });
     }
+    
+    // Add common query parameters for GET requests
+    if (route.method === 'GET' && !route.path.includes(':')) {
+      parameters.push(
+        {
+          name: 'limit',
+          in: 'query',
+          required: false,
+          schema: {
+            type: 'integer',
+            minimum: 1,
+            maximum: 100,
+            default: 10
+          },
+          description: 'Number of items to return'
+        },
+        {
+          name: 'offset',
+          in: 'query',
+          required: false,
+          schema: {
+            type: 'integer',
+            minimum: 0,
+            default: 0
+          },
+          description: 'Number of items to skip'
+        }
+      );
+    }
+    
+    return parameters;
+  }
 
-    responses['500'] = {
-      description: 'Internal Server Error',
+  generateRequestBody(route) {
+    const pathParts = route.path.split('/').filter(part => part && !part.startsWith(':'));
+    const resource = pathParts[pathParts.length - 1] || 'resource';
+    
+    return {
+      description: `${resource} data`,
+      required: true,
       content: {
         'application/json': {
           schema: {
             type: 'object',
             properties: {
-              error: { type: 'string', example: 'Internal server error' }
+              // Add some common properties
+              id: {
+                type: 'string',
+                description: 'Unique identifier'
+              },
+              name: {
+                type: 'string',
+                description: 'Name'
+              },
+              createdAt: {
+                type: 'string',
+                format: 'date-time',
+                description: 'Creation timestamp'
+              },
+              updatedAt: {
+                type: 'string',
+                format: 'date-time',
+                description: 'Last update timestamp'
+              }
             }
+          },
+          example: {
+            id: '123',
+            name: `Sample ${resource}`,
+            createdAt: '2023-01-01T00:00:00Z',
+            updatedAt: '2023-01-01T00:00:00Z'
           }
         }
       }
     };
-
-    return responses;
   }
 
-  /**
-   * Build schemas component
-   * @param {Object} parseResult 
-   * @returns {Object}
-   */
-  buildSchemas(parseResult) {
-    const schemas = {};
-
-    // Add schemas from parsed results
-    if (parseResult.schemas) {
-      Object.assign(schemas, parseResult.schemas);
+  generateResponses(route) {
+    const responses = {};
+    
+    // Success response
+    if (route.method === 'POST') {
+      responses['201'] = {
+        description: 'Resource created successfully',
+        content: {
+          'application/json': {
+            schema: {
+              type: 'object',
+              properties: {
+                id: { type: 'string' },
+                message: { type: 'string' }
+              }
+            }
+          }
+        }
+      };
+    } else if (route.method === 'DELETE') {
+      responses['204'] = {
+        description: 'Resource deleted successfully'
+      };
+    } else {
+      responses['200'] = {
+        description: 'Successful response',
+        content: {
+          'application/json': {
+            schema: {
+              type: route.path.includes(':') ? 'object' : 'array',
+              items: route.path.includes(':') ? undefined : { type: 'object' }
+            }
+          }
+        }
+      };
     }
-
-    // Add common schemas
-    schemas.Error = {
-      type: 'object',
-      properties: {
-        error: {
-          type: 'string',
-          description: 'Error message'
-        },
-        code: {
-          type: 'string',
-          description: 'Error code'
-        }
-      }
+    
+    // Error responses
+    if (route.path.includes(':')) {
+      responses['404'] = {
+        description: 'Resource not found'
+      };
+    }
+    
+    responses['400'] = {
+      description: 'Bad request'
     };
-
-    schemas.Success = {
-      type: 'object',
-      properties: {
-        message: {
-          type: 'string',
-          description: 'Success message'
-        },
-        data: {
-          type: 'object',
-          description: 'Response data'
-        }
-      }
+    
+    responses['500'] = {
+      description: 'Internal server error'
     };
-
-    return schemas;
-  }
-
-  /**
-   * Build tags for grouping operations
-   * @param {Array} routes 
-   * @returns {Array}
-   */
-  buildTags(routes) {
-    const categories = new Set();
-    routes.forEach(route => {
-      categories.add(route.category || 'general');
-    });
-
-    return Array.from(categories).map(category => ({
-      name: category,
-      description: this.getCategoryDescription(category)
-    }));
-  }
-
-  /**
-   * Get description for route category
-   * @param {string} category 
-   * @returns {string}
-   */
-  getCategoryDescription(category) {
-    const descriptions = {
-      authentication: 'Authentication and authorization endpoints',
-      'user-management': 'User management operations',
-      'versioned-api': 'Versioned API endpoints',
-      admin: 'Administrative operations',
-      'health-check': 'Health check and monitoring endpoints',
-      general: 'General API operations'
-    };
-
-    return descriptions[category] || `${category} operations`;
-  }
-
-  /**
-   * Get route categories with counts
-   * @param {Array} routes 
-   * @returns {Object}
-   */
-  getRouteCategories(routes) {
-    const categories = {};
-    routes.forEach(route => {
-      const category = route.category || 'general';
-      categories[category] = (categories[category] || 0) + 1;
-    });
-    return categories;
+    
+    return responses;
   }
 }
 

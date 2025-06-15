@@ -1,396 +1,175 @@
-const expressParser = require('./expressParser');
-const astAnalyzer = require('./astAnalyzer');
-const fileScanner = require('../scanner/fileScanner');
+const fs = require('fs-extra');
+const parser = require('@babel/parser');
+const traverse = require('@babel/traverse').default;
+const t = require('@babel/types');
 
-/**
- * Main parser for extracting detailed route information from code
- */
 class Parser {
-  constructor(options = {}) {
-    this.options = {
-      parseComments: true,
-      inferSchemas: true,
-      extractMiddleware: true,
-      maxFileSize: 5 * 1024 * 1024, // 5MB
-      ...options
-    };
+  constructor() {
+    this.routes = [];
   }
 
-  /**
-   * Parse route files to extract detailed API information
-   * @param {Array} files - Array of file objects from scanner
-   * @returns {Promise<Object>} Parsed route information
-   */
-  async parseFiles(files) {
-    console.log(`📝 Parsing ${files.length} route files...`);
-
-    const results = {
-      routes: [],
-      middleware: [],
-      schemas: {},
-      errors: [],
-      summary: {
-        totalRoutes: 0,
-        frameworks: new Set(),
-        httpMethods: new Set()
-      }
-    };
-
-    for (const file of files) {
-      try {
-        console.log(`   Parsing ${file.path}`);
-        const parseResult = await this.parseFile(file);
-        
-        if (parseResult.routes.length > 0) {
-          results.routes.push(...parseResult.routes);
-          results.middleware.push(...parseResult.middleware);
-          
-          // Merge schemas
-          Object.assign(results.schemas, parseResult.schemas);
-          
-          // Update summary
-          results.summary.totalRoutes += parseResult.routes.length;
-          results.summary.frameworks.add(file.framework);
-          
-          parseResult.routes.forEach(route => {
-            results.summary.httpMethods.add(route.method);
-          });
-        }
-      } catch (error) {
-        console.warn(`⚠️  Failed to parse ${file.path}:`, error.message);
-        results.errors.push({
-          file: file.path,
-          error: error.message
-        });
-      }
-    }
-
-    // Convert Sets to Arrays for JSON serialization
-    results.summary.frameworks = Array.from(results.summary.frameworks);
-    results.summary.httpMethods = Array.from(results.summary.httpMethods);
-
-    console.log(`✅ Parsing complete: ${results.routes.length} routes extracted`);
-    return results;
-  }
-
-  /**
-   * Parse a single file for route information
-   * @param {Object} file - File object with path and framework info
-   * @returns {Promise<Object>}
-   */
-  async parseFile(file) {
-    const content = await fileScanner.readFileContent(file.path);
-    if (!content) {
-      throw new Error('Could not read file content');
-    }
-
-    // Check file size
-    if (content.length > this.options.maxFileSize) {
-      throw new Error(`File too large: ${content.length} bytes`);
-    }
-
-    const parseResult = {
-      routes: [],
-      middleware: [],
-      schemas: {},
-      filePath: file.path,
-      framework: file.framework
-    };
-
+  async parseFile(filePath) {
     try {
-      // Parse with framework-specific parser
-      switch (file.framework) {
-        case 'express':
-          const expressResult = await expressParser.parse(content, file.path, this.options);
-          Object.assign(parseResult, expressResult);
-          break;
-          
-        case 'fastify':
-          // TODO: Implement fastify parser
-          console.warn('Fastify parsing not yet implemented');
-          break;
-          
-        case 'koa':
-          // TODO: Implement koa parser
-          console.warn('Koa parsing not yet implemented');
-          break;
-          
-        default:
-          // Try generic AST parsing
-          const genericResult = await astAnalyzer.parseGeneric(content, file.path, this.options);
-          Object.assign(parseResult, genericResult);
-      }
-
-      // Enhance routes with additional analysis
-      parseResult.routes = parseResult.routes.map(route => this.enhanceRoute(route, content));
-
-      return parseResult;
-    } catch (error) {
-      console.error(`Parser error in ${file.path}:`, error.message);
-      throw error;
-    }
-  }
-
-  /**
-   * Enhance route with additional metadata and analysis
-   * @param {Object} route 
-   * @param {string} content 
-   * @returns {Object}
-   */
-  enhanceRoute(route, content) {
-    const enhanced = { ...route };
-
-    // Add unique ID
-    enhanced.id = this.generateRouteId(route);
-
-    // Analyze route parameters
-    enhanced.parameters = this.extractParameters(route.path);
-
-    // Try to infer response schema
-    if (this.options.inferSchemas) {
-      enhanced.responseSchema = this.inferResponseSchema(route, content);
-      enhanced.requestSchema = this.inferRequestSchema(route, content);
-    }
-
-    // Extract JSDoc comments if available
-    if (this.options.parseComments && route.comments) {
-      enhanced.documentation = this.parseJSDocComments(route.comments);
-    }
-
-    // Categorize route
-    enhanced.category = this.categorizeRoute(route.path);
-
-    // Add metadata
-    enhanced.metadata = {
-      hasAuth: this.detectAuthentication(route, content),
-      hasValidation: this.detectValidation(route, content),
-      isAsync: route.isAsync || false,
-      complexity: this.calculateComplexity(route)
-    };
-
-    return enhanced;
-  }
-
-  /**
-   * Generate unique ID for route
-   * @param {Object} route 
-   * @returns {string}
-   */
-  generateRouteId(route) {
-    const pathKey = route.path.replace(/[^a-zA-Z0-9]/g, '_');
-    return `${route.method.toLowerCase()}_${pathKey}`;
-  }
-
-  /**
-   * Extract parameters from route path
-   * @param {string} path 
-   * @returns {Array}
-   */
-  extractParameters(path) {
-    const parameters = [];
-    
-    // Express-style parameters (:param)
-    const expressParams = path.match(/:([a-zA-Z0-9_]+)/g);
-    if (expressParams) {
-      expressParams.forEach(param => {
-        parameters.push({
-          name: param.substring(1),
-          in: 'path',
-          type: 'string',
-          required: true
-        });
+      const content = await fs.readFile(filePath, 'utf-8');
+      const ast = parser.parse(content, {
+        sourceType: 'module',
+        allowImportExportEverywhere: true,
+        plugins: [
+          'jsx',
+          'typescript',
+          'decorators-legacy',
+          'classProperties',
+          'objectRestSpread',
+          'asyncGenerators',
+          'functionBind',
+          'exportDefaultFrom',
+          'exportNamespaceFrom',
+          'dynamicImport'
+        ]
       });
-    }
 
-    // Capture groups ({param})
-    const captureParams = path.match(/{([a-zA-Z0-9_]+)}/g);
-    if (captureParams) {
-      captureParams.forEach(param => {
-        const name = param.slice(1, -1);
-        if (!parameters.find(p => p.name === name)) {
-          parameters.push({
-            name,
-            in: 'path',
-            type: 'string',
-            required: true
-          });
-        }
-      });
-    }
-
-    return parameters;
-  }
-
-  /**
-   * Infer response schema from route handler
-   * @param {Object} route 
-   * @param {string} content 
-   * @returns {Object|null}
-   */
-  inferResponseSchema(route, content) {
-    // Simple schema inference - can be enhanced with AST analysis
-    try {
-      // Look for common response patterns
-      const responsePatterns = [
-        /res\.json\s*\(\s*{([^}]+)}/,
-        /res\.send\s*\(\s*{([^}]+)}/,
-        /return\s*{([^}]+)}/
-      ];
-
-      for (const pattern of responsePatterns) {
-        const match = content.match(pattern);
-        if (match) {
-          // Basic schema extraction - can be improved
-          return {
-            type: 'object',
-            properties: {
-              // Simplified - would need proper AST parsing for accurate schemas
-              data: { type: 'object' }
-            }
-          };
-        }
-      }
-
-      return null;
-    } catch (error) {
-      return null;
-    }
-  }
-
-  /**
-   * Infer request schema from route handler
-   * @param {Object} route 
-   * @param {string} content 
-   * @returns {Object|null}
-   */
-  inferRequestSchema(route, content) {
-    if (['POST', 'PUT', 'PATCH'].includes(route.method)) {
-      // Look for body parsing patterns
-      if (content.includes('req.body')) {
-        return {
-          type: 'object',
-          properties: {
-            // Simplified - would need proper analysis
+      const routes = [];
+      
+      traverse(ast, {
+        CallExpression: (path) => {
+          const route = this.extractRoute(path);
+          if (route) {
+            route.file = filePath;
+            routes.push(route);
           }
-        };
+        }
+      });
+
+      return routes;
+    } catch (error) {
+      console.warn(`Warning: Could not parse ${filePath}:`, error.message);
+      return [];
+    }
+  }
+
+  extractRoute(path) {
+    const { node } = path;
+    
+    // Handle app.get(), router.post(), etc.
+    if (t.isMemberExpression(node.callee)) {
+      const object = node.callee.object;
+      const property = node.callee.property;
+      
+      if (t.isIdentifier(property)) {
+        const method = property.name.toLowerCase();
+        const httpMethods = ['get', 'post', 'put', 'delete', 'patch', 'options', 'head'];
+        
+        if (httpMethods.includes(method)) {
+          const routePath = this.extractRoutePath(node.arguments[0]);
+          if (routePath) {
+            return {
+              method: method.toUpperCase(),
+              path: routePath,
+              handler: this.extractHandler(node.arguments[1] || node.arguments[2]),
+              middleware: this.extractMiddleware(node.arguments),
+              parameters: this.extractParameters(routePath),
+              description: this.extractDescription(path)
+            };
+          }
+        }
       }
+    }
+    
+    return null;
+  }
+
+  extractRoutePath(node) {
+    if (t.isStringLiteral(node)) {
+      return node.value;
+    }
+    if (t.isTemplateLiteral(node)) {
+      // Handle template literals like `/users/${id}`
+      let path = '';
+      for (let i = 0; i < node.quasis.length; i++) {
+        path += node.quasis[i].value.raw;
+        if (i < node.expressions.length) {
+          path += ':param' + i; // Convert to parameter syntax
+        }
+      }
+      return path;
     }
     return null;
   }
 
-  /**
-   * Parse JSDoc comments
-   * @param {string} comments 
-   * @returns {Object}
-   */
-  parseJSDocComments(comments) {
-    const doc = {
-      summary: '',
-      description: '',
-      tags: []
-    };
+  extractHandler(node) {
+    if (!node) return null;
+    
+    if (t.isFunctionExpression(node) || t.isArrowFunctionExpression(node)) {
+      return {
+        type: 'inline',
+        params: node.params.map(param => param.name),
+        async: node.async
+      };
+    }
+    
+    if (t.isIdentifier(node)) {
+      return {
+        type: 'reference',
+        name: node.name
+      };
+    }
+    
+    return null;
+  }
 
-    try {
-      // Simple JSDoc parsing - can be enhanced
-      const lines = comments.split('\n');
-      for (const line of lines) {
-        const trimmed = line.trim().replace(/^\*\s?/, '');
-        if (trimmed.startsWith('@')) {
-          const [tag, ...rest] = trimmed.split(' ');
-          doc.tags.push({
-            tag: tag.substring(1),
-            value: rest.join(' ')
-          });
-        } else if (trimmed && !doc.description) {
-          doc.description = trimmed;
+  extractMiddleware(args) {
+    const middleware = [];
+    // Skip first argument (route path) and last argument (handler)
+    for (let i = 1; i < args.length - 1; i++) {
+      const arg = args[i];
+      if (t.isIdentifier(arg)) {
+        middleware.push(arg.name);
+      }
+    }
+    return middleware;
+  }
+
+  extractParameters(routePath) {
+    const parameters = [];
+    const pathParams = routePath.match(/:(\w+)/g);
+    
+    if (pathParams) {
+      pathParams.forEach(param => {
+        parameters.push({
+          name: param.substring(1),
+          in: 'path',
+          required: true,
+          type: 'string'
+        });
+      });
+    }
+    
+    return parameters;
+  }
+
+  extractDescription(path) {
+    // Try to find preceding comments
+    const comments = path.node.leadingComments;
+    if (comments && comments.length > 0) {
+      const lastComment = comments[comments.length - 1];
+      if (lastComment.type === 'CommentBlock') {
+        // Extract from JSDoc style comments
+        const content = lastComment.value;
+        const descMatch = content.match(/@description\s+(.+)/);
+        if (descMatch) return descMatch[1].trim();
+        
+        // Fallback to first line of comment
+        const lines = content.split('\n');
+        for (const line of lines) {
+          const trimmed = line.trim().replace(/^\*\s?/, '');
+          if (trimmed && !trimmed.startsWith('@')) {
+            return trimmed;
+          }
         }
       }
-
-      doc.summary = doc.description.split('.')[0] || '';
-      return doc;
-    } catch (error) {
-      return doc;
     }
-  }
-
-  /**
-   * Categorize route based on path patterns
-   * @param {string} path 
-   * @returns {string}
-   */
-  categorizeRoute(path) {
-    if (path.includes('/auth')) return 'authentication';
-    if (path.includes('/api/v')) return 'versioned-api';
-    if (path.includes('/admin')) return 'admin';
-    if (path.includes('/user')) return 'user-management';
-    if (path.includes('/health')) return 'health-check';
-    return 'general';
-  }
-
-  /**
-   * Detect authentication patterns
-   * @param {Object} route 
-   * @param {string} content 
-   * @returns {boolean}
-   */
-  detectAuthentication(route, content) {
-    const authPatterns = [
-      /auth/i,
-      /jwt/i,
-      /token/i,
-      /authenticate/i,
-      /passport/i,
-      /req\.user/,
-      /authorization/i
-    ];
-
-    return authPatterns.some(pattern => pattern.test(content));
-  }
-
-  /**
-   * Detect validation patterns
-   * @param {Object} route 
-   * @param {string} content 
-   * @returns {boolean}
-   */
-  detectValidation(route, content) {
-    const validationPatterns = [
-      /validate/i,
-      /joi/i,
-      /yup/i,
-      /ajv/i,
-      /schema/i,
-      /check\(/,
-      /body\(/
-    ];
-
-    return validationPatterns.some(pattern => pattern.test(content));
-  }
-
-  /**
-   * Calculate route complexity score
-   * @param {Object} route 
-   * @returns {number}
-   */
-  calculateComplexity(route) {
-    let complexity = 1; // Base complexity
-
-    // Add complexity for parameters
-    if (route.parameters && route.parameters.length > 0) {
-      complexity += route.parameters.length * 0.5;
-    }
-
-    // Add complexity for middleware
-    if (route.middleware && route.middleware.length > 0) {
-      complexity += route.middleware.length * 0.3;
-    }
-
-    // Add complexity for async operations
-    if (route.isAsync) {
-      complexity += 1;
-    }
-
-    return Math.round(complexity * 10) / 10;
+    
+    return null;
   }
 }
 

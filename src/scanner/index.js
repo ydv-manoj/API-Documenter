@@ -1,89 +1,84 @@
-const fileScanner = require('./fileScanner');
-const routeDetector = require('./routeDetector');
+const fs = require('fs-extra');
+const path = require('path');
+const { glob } = require('glob'); // Updated import for newer glob versions
 
 class Scanner {
   constructor(options = {}) {
     this.options = {
-      extensions: ['.js', '.ts', '.mjs'],
-      excludeDirs: ['node_modules', 'dist', 'build', '.git', 'coverage'],
-      frameworks: ['express', 'fastify', 'koa'],
+      include: ['**/*.js', '**/*.ts'],
+      exclude: ['**/node_modules/**', '**/test/**', '**/*.test.js', '**/*.spec.js'],
+      frameworks: ['express'],
       ...options
     };
   }
 
-  /**
-   * Scan directory for API route files
-   * @param {string} targetPath - Path to scan
-   * @returns {Promise<Object>} Scan results with framework detection and file list
-   */
-  async scan(targetPath = process.cwd()) {
-    console.log(`🔍 Scanning ${targetPath} for API routes...`);
+  async findRouteFiles(directory) {
+    const files = [];
     
     try {
-      // Find all potential route files
-      const files = await fileScanner.findFiles(targetPath, this.options);
-      console.log(`📁 Found ${files.length} potential route files`);
-
-      // Detect framework and filter relevant files
-      const routeFiles = [];
-      let detectedFramework = null;
-
-      for (const file of files) {
-        const detection = await routeDetector.analyzeFile(file, this.options.frameworks);
-        if (detection.hasRoutes) {
-          routeFiles.push({
-            path: file,
-            framework: detection.framework,
-            confidence: detection.confidence,
-            routeCount: detection.routeCount
-          });
-          
-          if (!detectedFramework || detection.confidence > 0.8) {
-            detectedFramework = detection.framework;
-          }
-        }
+      for (const pattern of this.options.include) {
+        const matches = await glob(path.join(directory, pattern));
+        files.push(...matches);
       }
-
-      const result = {
-        targetPath,
-        framework: detectedFramework,
-        totalFiles: files.length,
-        routeFiles: routeFiles.length,
-        files: routeFiles,
-        scanTime: new Date().toISOString()
-      };
-
-      console.log(`✅ Scan complete: ${routeFiles.length} route files found`);
-      if (detectedFramework) {
-        console.log(`🚀 Detected framework: ${detectedFramework}`);
-      }
-
-      return result;
     } catch (error) {
-      console.error('❌ Scanner error:', error.message);
-      throw error;
+      console.warn('Glob error:', error.message);
+      // Fallback to manual file search
+      return this.manualFileSearch(directory);
     }
+    
+    // Filter out excluded files
+    const filteredFiles = files.filter(file => {
+      return !this.options.exclude.some(pattern => {
+        return file.match(new RegExp(pattern.replace(/\*\*/g, '.*').replace(/\*/g, '[^/]*')));
+      });
+    });
+    
+    // Filter files that likely contain routes
+    const routeFiles = [];
+    for (const file of filteredFiles) {
+      if (await this.containsRoutes(file)) {
+        routeFiles.push(file);
+      }
+    }
+    
+    return routeFiles;
   }
 
-  /**
-   * Quick scan to check if directory contains API routes
-   * @param {string} targetPath 
-   * @returns {Promise<boolean>}
-   */
-  async hasRoutes(targetPath = process.cwd()) {
-    try {
-      const files = await fileScanner.findFiles(targetPath, { 
-        ...this.options, 
-        maxFiles: 20 // Quick scan limit
-      });
+  async manualFileSearch(directory) {
+    const files = [];
+    
+    async function searchDir(dir) {
+      const entries = await fs.readdir(dir, { withFileTypes: true });
       
-      for (const file of files) {
-        const detection = await routeDetector.quickCheck(file);
-        if (detection.hasRoutes) {
-          return true;
+      for (const entry of entries) {
+        const fullPath = path.join(dir, entry.name);
+        
+        if (entry.isDirectory() && entry.name !== 'node_modules' && !entry.name.startsWith('.')) {
+          await searchDir(fullPath);
+        } else if (entry.isFile() && (entry.name.endsWith('.js') || entry.name.endsWith('.ts'))) {
+          files.push(fullPath);
         }
       }
-      return false;
+    }
+    
+    await searchDir(directory);
+    return files;
+  }
+
+  async containsRoutes(filePath) {
+    try {
+      const content = await fs.readFile(filePath, 'utf-8');
+      
+      // Check for common route patterns
+      const routePatterns = [
+        /app\.(get|post|put|delete|patch)\s*\(/,
+        /router\.(get|post|put|delete|patch)\s*\(/,
+        /express\(\)\.router\(\)/,
+        /@(Get|Post|Put|Delete|Patch)\s*\(/,  // NestJS decorators
+        /fastify\.(get|post|put|delete|patch)/,  // Fastify
+      ];
+      
+      return routePatterns.some(pattern => pattern.test(content));
     } catch (error) {
       return false;
     }
