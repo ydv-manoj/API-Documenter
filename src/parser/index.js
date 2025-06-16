@@ -32,7 +32,7 @@ class Parser {
       
       traverse(ast, {
         CallExpression: (path) => {
-          const route = this.extractRoute(path);
+          const route = this.extractRoute(path, content);
           if (route) {
             route.file = filePath;
             routes.push(route);
@@ -47,7 +47,7 @@ class Parser {
     }
   }
 
-  extractRoute(path) {
+  extractRoute(path, sourceCode) {
     const { node } = path;
     
     // Handle app.get(), router.post(), etc.
@@ -62,10 +62,13 @@ class Parser {
         if (httpMethods.includes(method)) {
           const routePath = this.extractRoutePath(node.arguments[0]);
           if (routePath) {
+            const handlerInfo = this.extractHandlerWithCode(node.arguments, sourceCode);
+            
             return {
               method: method.toUpperCase(),
               path: routePath,
-              handler: this.extractHandler(node.arguments[1] || node.arguments[2]),
+              handler: handlerInfo.handler,
+              handlerCode: handlerInfo.code,
               middleware: this.extractMiddleware(node.arguments),
               parameters: this.extractParameters(routePath),
               description: this.extractDescription(path)
@@ -83,17 +86,38 @@ class Parser {
       return node.value;
     }
     if (t.isTemplateLiteral(node)) {
-      // Handle template literals like `/users/${id}`
       let path = '';
       for (let i = 0; i < node.quasis.length; i++) {
         path += node.quasis[i].value.raw;
         if (i < node.expressions.length) {
-          path += ':param' + i; // Convert to parameter syntax
+          path += ':param' + i;
         }
       }
       return path;
     }
     return null;
+  }
+
+  extractHandlerWithCode(args, sourceCode) {
+    // Get the last argument (handler function)
+    const handlerNode = args[args.length - 1];
+    
+    if (!handlerNode) {
+      return { handler: null, code: null };
+    }
+
+    const handler = this.extractHandler(handlerNode);
+    
+    // Extract the actual code
+    let code = null;
+    if (handlerNode.start !== undefined && handlerNode.end !== undefined) {
+      code = sourceCode.slice(handlerNode.start, handlerNode.end);
+      
+      // Clean up the code formatting
+      code = this.formatCode(code);
+    }
+    
+    return { handler, code };
   }
 
   extractHandler(node) {
@@ -102,7 +126,11 @@ class Parser {
     if (t.isFunctionExpression(node) || t.isArrowFunctionExpression(node)) {
       return {
         type: 'inline',
-        params: node.params.map(param => param.name),
+        params: node.params.map(param => {
+          if (t.isIdentifier(param)) return param.name;
+          if (t.isObjectPattern(param)) return 'destructured';
+          return 'unknown';
+        }),
         async: node.async
       };
     }
@@ -124,6 +152,11 @@ class Parser {
       const arg = args[i];
       if (t.isIdentifier(arg)) {
         middleware.push(arg.name);
+      } else if (t.isCallExpression(arg)) {
+        // Handle middleware like authenticate(), validate(), etc.
+        if (t.isIdentifier(arg.callee)) {
+          middleware.push(arg.callee.name + '()');
+        }
       }
     }
     return middleware;
@@ -148,17 +181,14 @@ class Parser {
   }
 
   extractDescription(path) {
-    // Try to find preceding comments
     const comments = path.node.leadingComments;
     if (comments && comments.length > 0) {
       const lastComment = comments[comments.length - 1];
       if (lastComment.type === 'CommentBlock') {
-        // Extract from JSDoc style comments
         const content = lastComment.value;
         const descMatch = content.match(/@description\s+(.+)/);
         if (descMatch) return descMatch[1].trim();
         
-        // Fallback to first line of comment
         const lines = content.split('\n');
         for (const line of lines) {
           const trimmed = line.trim().replace(/^\*\s?/, '');
@@ -170,6 +200,14 @@ class Parser {
     }
     
     return null;
+  }
+
+  formatCode(code) {
+    return code
+      .split('\n')
+      .map(line => line.trim())
+      .filter(line => line.length > 0)
+      .join('\n');
   }
 }
 

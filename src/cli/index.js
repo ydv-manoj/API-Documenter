@@ -1,5 +1,3 @@
-#!/usr/bin/env node
-
 const { Command } = require('commander');
 const chalk = require('chalk');
 const ora = require('ora');
@@ -7,6 +5,7 @@ const Scanner = require('../scanner');
 const Parser = require('../parser');
 const Generator = require('../generator');
 const Server = require('../server');
+const AIAnalyzer = require('../ai');
 const fs = require('fs-extra');
 const path = require('path');
 
@@ -14,25 +13,35 @@ const program = new Command();
 
 program
   .name('api-documenter')
-  .description('Automatically scan your codebase and generate interactive Swagger UI documentation')
+  .description('AI-powered API documentation generator')
   .version('1.0.0');
 
 program
   .command('scan')
-  .description('Scan your codebase for API routes')
+  .description('Scan your codebase for API routes and generate AI-powered documentation')
   .argument('[directory]', 'Directory to scan', './src')
   .option('-o, --output <path>', 'Output directory for generated docs', './docs')
   .option('-c, --config <path>', 'Path to config file')
   .option('-f, --format <format>', 'Output format (json|yaml)', 'json')
+  .option('--no-ai', 'Disable AI analysis and use template generation')
   .action(async (directory, options) => {
-    const spinner = ora('Scanning for API routes...').start();
+    const spinner = ora('🔍 Scanning for API routes...').start();
     
     try {
+      // Check for Groq API key if AI is enabled
+      if (options.ai !== false && !process.env.GROQ_API_KEY) {
+        spinner.fail('❌ GROQ_API_KEY environment variable is required for AI analysis');
+        console.log(chalk.yellow('\n💡 Get your API key from: https://console.groq.com/'));
+        console.log(chalk.white('💡 Set it with: export GROQ_API_KEY="your-api-key"'));
+        console.log(chalk.cyan('💡 Or use --no-ai flag for basic template generation'));
+        process.exit(1);
+      }
+
       // Initialize scanner
       const scanner = new Scanner();
       const routeFiles = await scanner.findRouteFiles(directory);
       
-      spinner.text = `Found ${routeFiles.length} route files. Parsing...`;
+      spinner.text = `📁 Found ${routeFiles.length} route files. Parsing...`;
       
       // Parse routes
       const parser = new Parser();
@@ -43,11 +52,35 @@ program
         routes.push(...fileRoutes);
       }
       
-      spinner.text = `Parsed ${routes.length} routes. Generating documentation...`;
+      spinner.text = `📝 Parsed ${routes.length} routes. ${options.ai !== false ? 'Starting AI analysis...' : 'Generating documentation...'}`;
+      
+      let analysisResults = [];
+      
+      if (options.ai !== false) {
+        // AI-powered analysis
+        const aiAnalyzer = new AIAnalyzer(process.env.GROQ_API_KEY);
+        spinner.text = `🤖 Analyzing routes with AI (this may take a moment)...`;
+        
+        analysisResults = await aiAnalyzer.analyzeBatch(routes);
+        
+        spinner.text = `✨ AI analysis complete. Generating documentation...`;
+      } else {
+        // Fallback to template generation
+        analysisResults = routes.map(route => ({
+          route,
+          analysis: {
+            summary: `${route.method} ${route.path}`,
+            description: 'API endpoint',
+            tags: ['API'],
+            parameters: route.parameters || [],
+            statusCodes: { '200': 'Success' }
+          }
+        }));
+      }
       
       // Generate OpenAPI spec
       const generator = new Generator();
-      const openApiSpec = generator.generateSpec(routes);
+      const openApiSpec = generator.generateSpec(analysisResults);
       
       // Ensure output directory exists
       await fs.ensureDir(options.output);
@@ -61,19 +94,23 @@ program
         await fs.writeJSON(specFile, openApiSpec, { spaces: 2 });
       }
       
-      spinner.succeed(`Generated API documentation at ${chalk.green(specFile)}`);
+      spinner.succeed(`✅ Generated ${options.ai !== false ? 'AI-powered' : 'template-based'} API documentation`);
       
-      console.log(chalk.cyan('\nRoutes discovered:'));
-      routes.forEach(route => {
-        console.log(`  ${chalk.yellow(route.method.padEnd(6))} ${route.path}`);
+      console.log(chalk.cyan('\n📋 Routes discovered:'));
+      analysisResults.forEach(({ route, analysis }) => {
+        console.log(`  ${chalk.yellow(route.method.padEnd(6))} ${route.path} - ${chalk.gray(analysis.summary)}`);
       });
       
-      console.log(chalk.cyan('\nRun the following to serve interactive docs:'));
+      console.log(chalk.green(`\n📄 Documentation saved to: ${specFile}`));
+      console.log(chalk.cyan('\n🚀 Start interactive server:'));
       console.log(chalk.white(`  api-documenter serve --spec ${specFile}`));
       
     } catch (error) {
-      spinner.fail('Failed to scan API routes');
+      spinner.fail('❌ Failed to generate API documentation');
       console.error(chalk.red(error.message));
+      if (error.message.includes('Groq')) {
+        console.log(chalk.yellow('\n💡 Try using --no-ai flag for basic generation without AI'));
+      }
       process.exit(1);
     }
   });

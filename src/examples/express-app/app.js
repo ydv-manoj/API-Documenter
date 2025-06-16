@@ -1,8 +1,6 @@
 const express = require('express');
 const cors = require('cors');
 const userRoutes = require('./routes/users');
-const productRoutes = require('./routes/products');
-const authRoutes = require('./routes/auth');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -14,15 +12,14 @@ app.use(express.urlencoded({ extended: true }));
 
 // Routes
 app.use('/api/users', userRoutes);
-app.use('/api/products', productRoutes);
-app.use('/api/auth', authRoutes);
+
 
 // Basic route
 app.get('/', (req, res) => {
   res.json({ 
     message: 'Welcome to Express Basic API',
     version: '1.0.0',
-    endpoints: ['/api/users', '/api/products', '/api/auth']
+    endpoints: ['/api/users']
   });
 });
 
