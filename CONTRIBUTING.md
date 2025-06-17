@@ -19,7 +19,7 @@ Thank you for your interest in contributing to API-Documenter!
 
 Feel free to open issues for feature requests like:
 - OpenAI API integration
-- FastAPI support
+- FastAPI/Django/Flask support
 - Enhanced documentation templates
 - Custom theming options
 
