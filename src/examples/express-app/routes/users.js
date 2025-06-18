@@ -1,11 +1,11 @@
-const express = require('express');
-const router = express.Router();
+const express = require('express')
+const router = express.Router()
 
 // Mock data
-let users = [
+const users = [
   { id: 1, name: 'John Doe', email: 'john@example.com', role: 'admin' },
   { id: 2, name: 'Jane Smith', email: 'jane@example.com', role: 'user' }
-];
+]
 
 /**
  * @swagger
@@ -19,8 +19,8 @@ let users = [
  *         description: List of users
  */
 router.get('/', (req, res) => {
-  res.json({ users, total: users.length });
-});
+  res.json({ users, total: users.length })
+})
 
 /**
  * @swagger
@@ -40,18 +40,18 @@ router.get('/', (req, res) => {
  *         description: User not found
  */
 router.get('/:id', (req, res) => {
-  const user = users.find(u => u.id === parseInt(req.params.id));
+  const user = users.find(u => u.id === parseInt(req.params.id))
   if (!user) {
-    return res.status(404).json({ error: 'User not found' });
+    return res.status(404).json({ error: 'User not found' })
   }
-  res.json(user);
-});
+  res.json(user)
+})
 
 router.post('/', (req, res) => {
-  const { name, email, role = 'user' } = req.body;
-  
+  const { name, email, role = 'user' } = req.body
+
   if (!name || !email) {
-    return res.status(400).json({ error: 'Name and email are required' });
+    return res.status(400).json({ error: 'Name and email are required' })
   }
 
   const newUser = {
@@ -59,34 +59,34 @@ router.post('/', (req, res) => {
     name,
     email,
     role
-  };
+  }
 
-  users.push(newUser);
-  res.status(201).json(newUser);
-});
+  users.push(newUser)
+  res.status(201).json(newUser)
+})
 
 router.put('/:id', (req, res) => {
-  const userId = parseInt(req.params.id);
-  const userIndex = users.findIndex(u => u.id === userId);
-  
+  const userId = parseInt(req.params.id)
+  const userIndex = users.findIndex(u => u.id === userId)
+
   if (userIndex === -1) {
-    return res.status(404).json({ error: 'User not found' });
+    return res.status(404).json({ error: 'User not found' })
   }
 
-  users[userIndex] = { ...users[userIndex], ...req.body };
-  res.json(users[userIndex]);
-});
+  users[userIndex] = { ...users[userIndex], ...req.body }
+  res.json(users[userIndex])
+})
 
 router.delete('/:id', (req, res) => {
-  const userId = parseInt(req.params.id);
-  const userIndex = users.findIndex(u => u.id === userId);
-  
+  const userId = parseInt(req.params.id)
+  const userIndex = users.findIndex(u => u.id === userId)
+
   if (userIndex === -1) {
-    return res.status(404).json({ error: 'User not found' });
+    return res.status(404).json({ error: 'User not found' })
   }
 
-  users.splice(userIndex, 1);
-  res.status(204).send();
-});
+  users.splice(userIndex, 1)
+  res.status(204).send()
+})
 
-module.exports = router;
+module.exports = router

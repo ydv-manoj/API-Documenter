@@ -1,16 +1,16 @@
-const fs = require('fs-extra');
-const parser = require('@babel/parser');
-const traverse = require('@babel/traverse').default;
-const t = require('@babel/types');
+const fs = require('fs-extra')
+const parser = require('@babel/parser')
+const traverse = require('@babel/traverse').default
+const t = require('@babel/types')
 
 class Parser {
-  constructor() {
-    this.routes = [];
+  constructor () {
+    this.routes = []
   }
 
-  async parseFile(filePath) {
+  async parseFile (filePath) {
     try {
-      const content = await fs.readFile(filePath, 'utf-8');
+      const content = await fs.readFile(filePath, 'utf-8')
       const ast = parser.parse(content, {
         sourceType: 'module',
         allowImportExportEverywhere: true,
@@ -26,44 +26,44 @@ class Parser {
           'exportNamespaceFrom',
           'dynamicImport'
         ]
-      });
+      })
 
-      const routes = [];
-      
+      const routes = []
+
       traverse(ast, {
         CallExpression: (path) => {
-          const route = this.extractRoute(path, content);
+          const route = this.extractRoute(path, content)
           if (route) {
-            route.file = filePath;
-            routes.push(route);
+            route.file = filePath
+            routes.push(route)
           }
         }
-      });
+      })
 
-      return routes;
+      return routes
     } catch (error) {
-      console.warn(`Warning: Could not parse ${filePath}:`, error.message);
-      return [];
+      console.warn(`Warning: Could not parse ${filePath}:`, error.message)
+      return []
     }
   }
 
-  extractRoute(path, sourceCode) {
-    const { node } = path;
-    
+  extractRoute (path, sourceCode) {
+    const { node } = path
+
     // Handle app.get(), router.post(), etc.
     if (t.isMemberExpression(node.callee)) {
-      const object = node.callee.object;
-      const property = node.callee.property;
-      
+      // const object = node.callee.object
+      const property = node.callee.property
+
       if (t.isIdentifier(property)) {
-        const method = property.name.toLowerCase();
-        const httpMethods = ['get', 'post', 'put', 'delete', 'patch', 'options', 'head'];
-        
+        const method = property.name.toLowerCase()
+        const httpMethods = ['get', 'post', 'put', 'delete', 'patch', 'options', 'head']
+
         if (httpMethods.includes(method)) {
-          const routePath = this.extractRoutePath(node.arguments[0]);
+          const routePath = this.extractRoutePath(node.arguments[0])
           if (routePath) {
-            const handlerInfo = this.extractHandlerWithCode(node.arguments, sourceCode);
-            
+            const handlerInfo = this.extractHandlerWithCode(node.arguments, sourceCode)
+
             return {
               method: method.toUpperCase(),
               path: routePath,
@@ -72,100 +72,100 @@ class Parser {
               middleware: this.extractMiddleware(node.arguments),
               parameters: this.extractParameters(routePath),
               description: this.extractDescription(path)
-            };
+            }
           }
         }
       }
     }
-    
-    return null;
+
+    return null
   }
 
-  extractRoutePath(node) {
+  extractRoutePath (node) {
     if (t.isStringLiteral(node)) {
-      return node.value;
+      return node.value
     }
     if (t.isTemplateLiteral(node)) {
-      let path = '';
+      let path = ''
       for (let i = 0; i < node.quasis.length; i++) {
-        path += node.quasis[i].value.raw;
+        path += node.quasis[i].value.raw
         if (i < node.expressions.length) {
-          path += ':param' + i;
+          path += ':param' + i
         }
       }
-      return path;
+      return path
     }
-    return null;
+    return null
   }
 
-  extractHandlerWithCode(args, sourceCode) {
+  extractHandlerWithCode (args, sourceCode) {
     // Get the last argument (handler function)
-    const handlerNode = args[args.length - 1];
-    
+    const handlerNode = args[args.length - 1]
+
     if (!handlerNode) {
-      return { handler: null, code: null };
+      return { handler: null, code: null }
     }
 
-    const handler = this.extractHandler(handlerNode);
-    
+    const handler = this.extractHandler(handlerNode)
+
     // Extract the actual code
-    let code = null;
+    let code = null
     if (handlerNode.start !== undefined && handlerNode.end !== undefined) {
-      code = sourceCode.slice(handlerNode.start, handlerNode.end);
-      
+      code = sourceCode.slice(handlerNode.start, handlerNode.end)
+
       // Clean up the code formatting
-      code = this.formatCode(code);
+      code = this.formatCode(code)
     }
-    
-    return { handler, code };
+
+    return { handler, code }
   }
 
-  extractHandler(node) {
-    if (!node) return null;
-    
+  extractHandler (node) {
+    if (!node) return null
+
     if (t.isFunctionExpression(node) || t.isArrowFunctionExpression(node)) {
       return {
         type: 'inline',
         params: node.params.map(param => {
-          if (t.isIdentifier(param)) return param.name;
-          if (t.isObjectPattern(param)) return 'destructured';
-          return 'unknown';
+          if (t.isIdentifier(param)) return param.name
+          if (t.isObjectPattern(param)) return 'destructured'
+          return 'unknown'
         }),
         async: node.async
-      };
+      }
     }
-    
+
     if (t.isIdentifier(node)) {
       return {
         type: 'reference',
         name: node.name
-      };
+      }
     }
-    
-    return null;
+
+    return null
   }
 
-  extractMiddleware(args) {
-    const middleware = [];
+  extractMiddleware (args) {
+    const middleware = []
     // Skip first argument (route path) and last argument (handler)
     for (let i = 1; i < args.length - 1; i++) {
-      const arg = args[i];
+      const arg = args[i]
       if (t.isIdentifier(arg)) {
-        middleware.push(arg.name);
+        middleware.push(arg.name)
       } else if (t.isCallExpression(arg)) {
         // Handle middleware like authenticate(), validate(), etc.
         if (t.isIdentifier(arg.callee)) {
-          middleware.push(arg.callee.name + '()');
+          middleware.push(arg.callee.name + '()')
         }
       }
     }
-    return middleware;
+    return middleware
   }
 
-  extractParameters(routePath) {
-    const parameters = [];
-    const pathParams = routePath.match(/:(\w+)/g);
-    
+  extractParameters (routePath) {
+    const parameters = []
+    const pathParams = routePath.match(/:(\w+)/g)
+
     if (pathParams) {
       pathParams.forEach(param => {
         parameters.push({
@@ -173,42 +173,42 @@ class Parser {
           in: 'path',
           required: true,
           type: 'string'
-        });
-      });
+        })
+      })
     }
-    
-    return parameters;
+
+    return parameters
   }
 
-  extractDescription(path) {
-    const comments = path.node.leadingComments;
+  extractDescription (path) {
+    const comments = path.node.leadingComments
     if (comments && comments.length > 0) {
-      const lastComment = comments[comments.length - 1];
+      const lastComment = comments[comments.length - 1]
       if (lastComment.type === 'CommentBlock') {
-        const content = lastComment.value;
-        const descMatch = content.match(/@description\s+(.+)/);
-        if (descMatch) return descMatch[1].trim();
-        
-        const lines = content.split('\n');
+        const content = lastComment.value
+        const descMatch = content.match(/@description\s+(.+)/)
+        if (descMatch) return descMatch[1].trim()
+
+        const lines = content.split('\n')
         for (const line of lines) {
-          const trimmed = line.trim().replace(/^\*\s?/, '');
+          const trimmed = line.trim().replace(/^\*\s?/, '')
           if (trimmed && !trimmed.startsWith('@')) {
-            return trimmed;
+            return trimmed
           }
         }
       }
     }
-    
-    return null;
+
+    return null
   }
 
-  formatCode(code) {
+  formatCode (code) {
     return code
       .split('\n')
       .map(line => line.trim())
       .filter(line => line.length > 0)
-      .join('\n');
+      .join('\n')
   }
 }
 
-module.exports = Parser;
+module.exports = Parser
