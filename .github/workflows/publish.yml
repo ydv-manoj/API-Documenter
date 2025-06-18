@@ -4,6 +4,10 @@ on:
   release:
     types: [published]
 
+permissions:
+  contents: write  # Required for uploading release assets
+  packages: write  # Required for publishing packages
+
 jobs:
   publish:
     runs-on: ubuntu-latest
@@ -32,17 +36,14 @@ jobs:
       env:
         NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
     
-    - name: Create GitHub release assets
+    - name: Create package tarball
       run: |
         npm pack
-        mv *.tgz api-documenter-ai-${{ github.event.release.tag_name }}.tgz
+        ls -la *.tgz
     
     - name: Upload release assets
-      uses: actions/upload-release-asset@v1
+      uses: softprops/action-gh-release@v1
+      with:
+        files: '*.tgz'
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        upload_url: ${{ github.event.release.upload_url }}
-        asset_path: ./api-documenter-ai-${{ github.event.release.tag_name }}.tgz
-        asset_name: api-documenter-ai-${{ github.event.release.tag_name }}.tgz
-        asset_content_type: application/gzip
