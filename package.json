@@ -1,6 +1,6 @@
 {
   "name": "api-documenter-ai",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "AI-powered API documentation generator that analyzes your Express.js routes and creates interactive Swagger UI documentation",
   "main": "src/index.js",
   "bin": {
