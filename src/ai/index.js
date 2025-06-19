@@ -12,69 +12,96 @@ class AIAnalyzer {
   }
 
   async analyzeRoute (route) {
-    try {
-      const prompt = this.buildAnalysisPrompt(route)
+    const maxRetries = 3
+    let lastError
 
-      const completion = await this.groq.chat.completions.create({
-        messages: [
-          {
-            role: 'system',
-            content: `You are an expert API documentation generator. You MUST respond with ONLY a valid JSON object, no markdown, no explanations, no backticks.
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        const prompt = this.buildAnalysisPrompt(route)
 
-Your response must be a single JSON object in this exact format:
+        const completion = await this.groq.chat.completions.create({
+          messages: [
+            {
+              role: 'system',
+              content: `You are an expert API documentation generator. You must respond with ONLY a valid JSON object. No markdown, no explanations, no text before or after.
+
+Response format:
 {
   "summary": "Brief description",
   "description": "Detailed description", 
-  "requestSchema": {
-    "type": "object",
-    "properties": {},
-    "required": []
-  },
-  "responseSchema": {
-    "type": "object", 
-    "properties": {}
-  },
+  "requestSchema": null or {"type": "object", "properties": {}},
+  "responseSchema": {"type": "object", "properties": {}},
   "parameters": [],
   "tags": ["TagName"],
-  "examples": {
-    "request": {},
-    "response": {}
-  },
-  "statusCodes": {
-    "200": "Success description"
-  }
+  "examples": {"request": {}, "response": {}},
+  "statusCodes": {"200": "Success description"}
 }
 
-CRITICAL: Return ONLY the JSON object. No text before or after. No markdown formatting.`
-          },
-          {
-            role: 'user',
-            content: prompt
-          }
-        ],
-        model: 'meta-llama/llama-4-scout-17b-16e-instruct',
-        temperature: 0.1, // Lower temperature for more consistent JSON
-        max_tokens: 1500
-      })
+CRITICAL RULES:
+1. Return ONLY valid JSON
+2. No markdown formatting
+3. Use null for empty requestSchema (GET requests)
+4. All strings must be properly quoted
+5. No trailing commas
+6. No comments in JSON`
+            },
+            {
+              role: 'user',
+              content: prompt
+            }
+          ],
+          model: 'llama-3.3-70b-versatile',
+          temperature: 0.1,
+          max_tokens: 1000
+        })
 
-      const content = completion.choices[0]?.message?.content?.trim()
-      if (!content) {
-        throw new Error('No response from Groq API')
+        const content = completion.choices[0]?.message?.content?.trim()
+        if (!content) {
+          throw new Error('No response from Groq API')
+        }
+
+        // Extract and validate JSON
+        const jsonContent = this.extractJSON(content)
+        const analysis = this.parseJSON(jsonContent)
+
+        return this.validateAndEnhanceAnalysis(analysis, route)
+      } catch (error) {
+        lastError = error
+        if (attempt < maxRetries) {
+          console.warn(`AI analysis attempt ${attempt} failed for ${route.method} ${route.path}, retrying...`)
+          // Wait before retry
+          await new Promise(resolve => setTimeout(resolve, 1000 * attempt))
+        }
       }
+    }
 
-      // Extract JSON from response (handle markdown or extra text)
-      const jsonContent = this.extractJSON(content)
-      const analysis = JSON.parse(jsonContent)
+    console.warn(`AI analysis failed for ${route.method} ${route.path} after ${maxRetries} attempts:`, lastError.message)
+    return this.generateFallbackAnalysis(route)
+  }
 
-      return this.validateAndEnhanceAnalysis(analysis, route)
+  parseJSON (jsonString) {
+    try {
+      return JSON.parse(jsonString)
     } catch (error) {
-      console.warn(`AI analysis failed for ${route.method} ${route.path}:`, error.message)
-      return this.generateFallbackAnalysis(route)
+      // Try to fix common JSON issues
+      const fixed = jsonString
+        .replace(/,(\s*[}\]])/g, '$1') // Remove trailing commas
+        .replace(/([{,]\s*)(\w+):/g, '$1"$2":') // Quote unquoted keys
+        .replace(/:\s*'([^']*)'/g, ': "$1"') // Replace single quotes with double quotes
+        .replace(/\\n/g, ' ') // Replace newlines
+        .replace(/\s+/g, ' ') // Normalize whitespace
+        .trim()
+
+      try {
+        return JSON.parse(fixed)
+      } catch (fixError) {
+        throw new Error(`Invalid JSON: ${error.message}. Content: ${jsonString.substring(0, 200)}...`)
+      }
     }
   }
 
   extractJSON (content) {
-    // Remove markdown code blocks if present
+    // Remove markdown code blocks
     let jsonStr = content.replace(/```json\n?/g, '').replace(/```\n?/g, '')
 
     // Find JSON object boundaries
@@ -85,32 +112,24 @@ CRITICAL: Return ONLY the JSON object. No text before or after. No markdown form
       jsonStr = jsonStr.substring(startIndex, lastIndex + 1)
     }
 
-    // Clean up common issues
+    // Clean up common prefixes
     jsonStr = jsonStr
-      .replace(/^\s*["']json["']?\s*/, '') // Remove 'json' prefix
-      .replace(/Here is the?.*?:/i, '') // Remove "Here is the analysis:"
-      .replace(/Based on.*?:/i, '') // Remove "Based on analysis:"
+      .replace(/^.*?Here\s+is.*?:/i, '')
+      .replace(/^.*?Based\s+on.*?:/i, '')
+      .replace(/^.*?Analysis.*?:/i, '')
       .trim()
 
     return jsonStr
   }
 
   buildAnalysisPrompt (route) {
-    return `Analyze this Express.js route:
+    return `Analyze this Express.js route and return documentation as JSON:
 
 Method: ${route.method}
 Path: ${route.path}
-Handler Code:
-${route.handlerCode || 'No code available'}
+Code: ${route.handlerCode || 'No code available'}
 
-Generate API documentation focusing on:
-1. What this endpoint actually does
-2. Expected request format
-3. Response format
-4. HTTP status codes used
-5. Realistic examples
-
-Return analysis as JSON only.`
+Generate JSON with summary, description, schemas, parameters, tags, examples, and status codes.`
   }
 
   validateAndEnhanceAnalysis (analysis, route) {
